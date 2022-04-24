@@ -1,0 +1,212 @@
+#====================Sterling Engine for LJ-Gas===========================#
+
+# H = 1.0 # H == deformation factor, Simulation time is proportional to H
+# rho = 1.0 # rho == density
+# eps = 1.0 # epsilon == energy parameter in LJ equation
+
+#---------------Initialization------------------#
+
+variable			h equal 1.0 # Default = 1.0
+variable			rho equal 1.0 # Default = 1.0
+variable			epsilon equal 1.0 # Default = 1.0
+
+# The above variabless are the parameters for our simulations
+
+log					se_defmfact_$h_rho_${rho}_eps_${epsilon}.log
+
+units 				lj
+atom_style 			atomic
+
+variable			x0 equal 0
+variable			y0 equal 0
+variable			x1 equal 50						# Can be changed
+variable			y1 equal 50						# Can be changed
+
+variable    		sigma equal 1.0
+variable			rc equal 2.5
+
+dimension			2
+boundary 			p p p                           # Has to be periodic in all three sides
+atom_style			atomic
+
+lattice				sq2 ${rho}
+region				simbox block ${x0} ${x1} ${y0} ${y1} -0.1 0.1
+create_box			1 simbox
+create_atoms		1 region simbox
+
+variable			T1 equal 2.0
+variable			T2 equal 1.0
+
+mass 				1 1.0                               # Can be changed
+velocity 			all create ${T2} 87699				# Can be changed
+pair_style 			lj/cut ${rc}
+pair_coeff  		* * ${sigma} ${epsilon}
+
+variable			time_step equal 0.001 				# Can be changed
+variable			tdamp equal "v_time_step*100" 		# Don't change
+variable			pdamp equal "v_time_step*1000" 		# Don't change
+
+timestep			${time_step}
+
+variable			R equal "0.006/v_h"
+
+variable            no_cyc equal 200
+
+#--------------------Minimization----------------------#
+
+minimize        	1.0e-5 1.0e-7 1000 10000
+
+#------------------NPT Equilibration-------------------#
+
+fix					1 all npt temp ${T2} ${T2} ${tdamp} iso 1.0 1.0 ${pdamp} drag 0.0
+fix					2 all enforce2d
+
+thermo				5000
+run	  				50000
+
+variable			tmpx equal "lx"
+variable			Lx0 equal ${tmpx}
+
+unfix				1
+unfix				2
+
+variable			tmpx delete
+
+label				lp_loop
+variable			lp loop ${no_cyc}
+print				"${lp} Cycle Begins"
+
+#-------------------------Isochoric Heat Addition----------------------------#
+
+reset_timestep		0
+
+fix					nvt all nvt temp ${T2} ${T1} ${tdamp}
+fix					2 all enforce2d
+
+variable			etot equal etotal*atoms
+variable			p equal press
+variable			volu equal lx*ly*lz
+variable			temper equal temp
+variable			mytime equal step*dt
+
+fix 				pv all print 20 "${mytime} ${p} ${volu} ${temper} ${etot}" file se_isoch_heatadd_pvte_defmfact_$h_rho_${rho}_eps_${epsilon}_cyc_${lp}_dat.out screen no
+
+thermo				5000
+thermo_style		custom step temp pe ke etotal press vol
+
+variable            time_run equal 100000*v_h
+
+run					${time_run}
+
+unfix				nvt
+unfix				2
+unfix				pv
+
+#-----------------Isothermal Expansion in x-direction------------------#
+
+variable			initial equal 1.0
+variable			final equal 1.25
+
+variable			isothexp_run equal "round((v_final - v_initial)/(v_initial*v_R*dt))"
+
+reset_timestep		0
+
+variable			displace equal "v_Lx0*v_R*step*dt"
+variable			rate equal "v_Lx0*v_R"
+
+fix					nvt all nvt temp ${T1} ${T1} ${tdamp}
+fix					def all deform 1 x variable v_displace v_rate remap v
+fix					2 all enforce2d
+
+variable			strain equal "(lx - v_Lx0)/v_Lx0"
+
+variable			etot equal etotal*atoms
+variable			p equal press
+variable			volu equal lx*ly*lz
+variable			temper equal temp
+variable			mytime equal step*dt
+
+fix 				pv all print 20 "${mytime} ${p} ${volu} ${temper} ${etot}" file se_isoth_exp_pvte_defmfact_$h_rho_${rho}_eps_${epsilon}_cyc_${lp}_dat.out screen no
+
+thermo				5000
+thermo_style		custom step temp pe ke etotal press vol "v_strain"
+
+run					${isothexp_run}
+
+unfix				nvt
+unfix				def
+unfix				2
+unfix				pv
+
+variable			tmpx equal "lx"
+variable			Lx0 equal ${tmpx}
+
+variable			tmpx delete
+
+#-------------------------Isochoric Heat Extraction----------------------------#
+
+reset_timestep		0
+
+fix					nvt all nvt temp ${T1} ${T2} ${tdamp}
+fix					2 all enforce2d
+
+variable			etot equal etotal*atoms
+variable			p equal press
+variable			volu equal lx*ly*lz
+variable			temper equal temp
+variable			mytime equal step*dt
+
+fix 				pv all print 20 "${mytime} ${p} ${volu} ${temper} ${etot}" file se_isoch_heatsub_pvte_defmfact_$h_rho_${rho}_eps_${epsilon}_cyc_${lp}_dat.out screen no
+
+thermo				5000
+thermo_style		custom step temp pe ke etotal press vol
+
+run					${time_run}
+
+unfix				nvt
+unfix				2
+unfix				pv
+
+#-----------------Isothermal Compression in x-direction------------------#
+
+variable			isothexp_run equal "round((v_final - v_initial)/(v_final*v_R*dt))"
+
+reset_timestep		0
+
+variable			displace equal "-v_Lx0*v_R*step*dt"
+variable			rate equal "-v_Lx0*v_R"
+
+fix					nvt all nvt temp ${T2} ${T2} ${tdamp}
+fix					def all deform 1 x variable v_displace v_rate remap v
+fix					2 all enforce2d
+
+variable			strain equal "(lx - v_Lx0)/v_Lx0"
+
+variable			etot equal etotal*atoms
+variable			p equal press
+variable			volu equal lx*ly*lz
+variable			temper equal temp
+variable			mytime equal step*dt
+
+fix 				pv all print 20 "${mytime} ${p} ${volu} ${temper} ${etot}" file se_isoth_comp_pvte_defmfact_$h_rho_${rho}_eps_${epsilon}_cyc_${lp}_dat.out screen no
+
+thermo				5000
+thermo_style		custom step temp pe ke etotal press vol "v_strain"
+
+run					${isothexp_run}
+
+unfix				nvt
+unfix				def
+unfix				2
+unfix				pv
+
+variable			tmpx equal "lx"
+variable			Lx0 equal ${tmpx}
+
+variable			tmpx delete
+
+#-----------------------Cycle Ends------------------------------#
+
+print				"${lp} Cycle Ends"
+next				lp
+jump				SELF lp_loop
